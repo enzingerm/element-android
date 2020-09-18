@@ -18,7 +18,7 @@
 package org.matrix.android.sdk.internal.session.room.send
 
 import android.content.Context
-import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.WorkerParameters
 import com.squareup.moshi.JsonClass
 import org.matrix.android.sdk.api.failure.Failure
@@ -29,10 +29,11 @@ import org.matrix.android.sdk.api.session.room.send.SendState
 import org.matrix.android.sdk.internal.crypto.MXCRYPTO_ALGORITHM_MEGOLM
 import org.matrix.android.sdk.internal.crypto.MXEventDecryptionResult
 import org.matrix.android.sdk.internal.crypto.model.MXEncryptEventContentResult
+import org.matrix.android.sdk.internal.session.SessionComponent
 import org.matrix.android.sdk.internal.util.awaitCallback
+import org.matrix.android.sdk.internal.worker.MatrixCoroutineWorker
 import org.matrix.android.sdk.internal.worker.SessionWorkerParams
 import org.matrix.android.sdk.internal.worker.WorkerParamsFactory
-import org.matrix.android.sdk.internal.worker.getSessionComponent
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -41,7 +42,7 @@ import javax.inject.Inject
  * Possible next worker    : Always [SendEventWorker]
  */
 internal class EncryptEventWorker(context: Context, params: WorkerParameters)
-    : CoroutineWorker(context, params) {
+    : MatrixCoroutineWorker<EncryptEventWorker.Params>(context, params) {
 
     @JsonClass(generateAdapter = true)
     internal data class Params(
@@ -56,20 +57,11 @@ internal class EncryptEventWorker(context: Context, params: WorkerParameters)
     @Inject lateinit var localEchoRepository: LocalEchoRepository
     @Inject lateinit var cancelSendTracker: CancelSendTracker
 
-    override suspend fun doWork(): Result {
-        Timber.v("Start Encrypt work")
-        val params = WorkerParamsFactory.fromData<Params>(inputData)
-                ?: return Result.success()
-                        .also { Timber.e("Unable to parse work parameters") }
+    override fun parse(inputData: Data) = WorkerParamsFactory.fromData<Params>(inputData)
 
+    override suspend fun doSafeWork(sessionComponent: SessionComponent, params: Params): Result {
         Timber.v("## SendEvent: Start Encrypt work for event ${params.event.eventId}")
-        if (params.lastFailureMessage != null) {
-            // Transmit the error
-            return Result.success(inputData)
-                    .also { Timber.e("Work cancelled due to input error from parent") }
-        }
 
-        val sessionComponent = getSessionComponent(params.sessionId) ?: return Result.success()
         sessionComponent.inject(this)
 
         val localEvent = params.event
@@ -143,5 +135,14 @@ internal class EncryptEventWorker(context: Context, params: WorkerParameters)
             )
             return Result.success(WorkerParamsFactory.toData(nextWorkerParams))
         }
+    }
+
+    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+        return Result.success(
+                WorkerParamsFactory.toData(
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                )
+        )
     }
 }

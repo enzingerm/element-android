@@ -19,7 +19,7 @@ package org.matrix.android.sdk.internal.session.content
 
 import android.content.Context
 import android.graphics.BitmapFactory
-import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.WorkerParameters
 import com.squareup.moshi.JsonClass
 import org.matrix.android.sdk.api.extensions.tryThis
@@ -36,8 +36,10 @@ import org.matrix.android.sdk.internal.crypto.attachments.MXEncryptedAttachments
 import org.matrix.android.sdk.internal.crypto.model.rest.EncryptedFileInfo
 import org.matrix.android.sdk.internal.network.ProgressRequestBody
 import org.matrix.android.sdk.internal.session.DefaultFileService
+import org.matrix.android.sdk.internal.session.SessionComponent
 import org.matrix.android.sdk.internal.session.room.send.CancelSendTracker
 import org.matrix.android.sdk.internal.session.room.send.MultipleEventSendingDispatcherWorker
+import org.matrix.android.sdk.internal.worker.MatrixCoroutineWorker
 import org.matrix.android.sdk.internal.worker.SessionWorkerParams
 import org.matrix.android.sdk.internal.worker.WorkerParamsFactory
 import org.matrix.android.sdk.internal.worker.getSessionComponent
@@ -56,7 +58,8 @@ private data class NewImageAttributes(
  * Possible previous worker: None
  * Possible next worker    : Always [MultipleEventSendingDispatcherWorker]
  */
-internal class UploadContentWorker(val context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+internal class UploadContentWorker(val context: Context, params: WorkerParameters)
+    : MatrixCoroutineWorker<UploadContentWorker.Params>(context, params) {
 
     @JsonClass(generateAdapter = true)
     internal data class Params(
@@ -74,18 +77,10 @@ internal class UploadContentWorker(val context: Context, params: WorkerParameter
     @Inject lateinit var cancelSendTracker: CancelSendTracker
     @Inject lateinit var imageCompressor: ImageCompressor
 
-    override suspend fun doWork(): Result {
-        val params = WorkerParamsFactory.fromData<Params>(inputData)
-                ?: return Result.success()
-                        .also { Timber.e("Unable to parse work parameters") }
+    override fun parse(inputData: Data) = WorkerParamsFactory.fromData<Params>(inputData)
 
+    override suspend fun doSafeWork(sessionComponent: SessionComponent, params: Params): Result {
         Timber.v("Starting upload media work with params $params")
-
-        if (params.lastFailureMessage != null) {
-            // Transmit the error
-            return Result.success(inputData)
-                    .also { Timber.e("Work cancelled due to input error from parent") }
-        }
 
         // Just defensive code to ensure that we never have an uncaught exception that could break the queue
         return try {
@@ -94,6 +89,15 @@ internal class UploadContentWorker(val context: Context, params: WorkerParameter
             Timber.e(failure)
             handleFailure(params, failure)
         }
+    }
+
+    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+        return Result.success(
+                WorkerParamsFactory.toData(
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                )
+        )
     }
 
     private suspend fun internalDoWork(params: Params): Result {
@@ -318,7 +322,7 @@ internal class UploadContentWorker(val context: Context, params: WorkerParameter
         val updatedContent = when (messageContent) {
             is MessageImageContent -> messageContent.update(url, encryptedFileInfo, newImageAttributes)
             is MessageVideoContent -> messageContent.update(url, encryptedFileInfo, thumbnailUrl, thumbnailEncryptedFileInfo)
-            is MessageFileContent  -> messageContent.update(url, encryptedFileInfo)
+            is MessageFileContent -> messageContent.update(url, encryptedFileInfo)
             is MessageAudioContent -> messageContent.update(url, encryptedFileInfo)
             else                   -> messageContent
         }

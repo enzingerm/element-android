@@ -17,24 +17,25 @@
 package org.matrix.android.sdk.internal.session.room.send
 
 import android.content.Context
-import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.WorkerParameters
 import com.squareup.moshi.JsonClass
+import org.greenrobot.eventbus.EventBus
 import org.matrix.android.sdk.api.failure.Failure
 import org.matrix.android.sdk.internal.network.executeRequest
+import org.matrix.android.sdk.internal.session.SessionComponent
 import org.matrix.android.sdk.internal.session.room.RoomAPI
+import org.matrix.android.sdk.internal.worker.MatrixCoroutineWorker
 import org.matrix.android.sdk.internal.worker.SessionWorkerParams
 import org.matrix.android.sdk.internal.worker.WorkerParamsFactory
-import org.matrix.android.sdk.internal.worker.getSessionComponent
-import org.greenrobot.eventbus.EventBus
-import timber.log.Timber
 import javax.inject.Inject
 
 /**
  * Possible previous worker: None
  * Possible next worker    : None
  */
-internal class RedactEventWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+internal class RedactEventWorker(context: Context, params: WorkerParameters)
+    : MatrixCoroutineWorker<RedactEventWorker.Params>(context, params) {
 
     @JsonClass(generateAdapter = true)
     internal data class Params(
@@ -49,18 +50,9 @@ internal class RedactEventWorker(context: Context, params: WorkerParameters) : C
     @Inject lateinit var roomAPI: RoomAPI
     @Inject lateinit var eventBus: EventBus
 
-    override suspend fun doWork(): Result {
-        val params = WorkerParamsFactory.fromData<Params>(inputData)
-                ?: return Result.failure()
-                        .also { Timber.e("Unable to parse work parameters") }
+    override fun parse(inputData: Data) = WorkerParamsFactory.fromData<Params>(inputData)
 
-        if (params.lastFailureMessage != null) {
-            // Transmit the error
-            return Result.success(inputData)
-                    .also { Timber.e("Work cancelled due to input error from parent") }
-        }
-
-        val sessionComponent = getSessionComponent(params.sessionId) ?: return Result.success()
+    override suspend fun doSafeWork(sessionComponent: SessionComponent, params: Params): Result {
         sessionComponent.inject(this)
 
         val eventId = params.eventId
@@ -89,6 +81,15 @@ internal class RedactEventWorker(context: Context, params: WorkerParameters) : C
                         }
                     }
                 }
+        )
+    }
+
+    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+        return Result.success(
+                WorkerParamsFactory.toData(
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                )
         )
     }
 }

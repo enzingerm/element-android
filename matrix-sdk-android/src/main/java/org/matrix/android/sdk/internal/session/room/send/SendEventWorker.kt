@@ -18,7 +18,7 @@
 package org.matrix.android.sdk.internal.session.room.send
 
 import android.content.Context
-import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.WorkerParameters
 import com.squareup.moshi.JsonClass
 import org.greenrobot.eventbus.EventBus
@@ -27,10 +27,11 @@ import org.matrix.android.sdk.api.session.events.model.Content
 import org.matrix.android.sdk.api.session.events.model.Event
 import org.matrix.android.sdk.api.session.room.send.SendState
 import org.matrix.android.sdk.internal.network.executeRequest
+import org.matrix.android.sdk.internal.session.SessionComponent
 import org.matrix.android.sdk.internal.session.room.RoomAPI
+import org.matrix.android.sdk.internal.worker.MatrixCoroutineWorker
 import org.matrix.android.sdk.internal.worker.SessionWorkerParams
 import org.matrix.android.sdk.internal.worker.WorkerParamsFactory
-import org.matrix.android.sdk.internal.worker.getSessionComponent
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -42,7 +43,7 @@ import javax.inject.Inject
  */
 internal class SendEventWorker(context: Context,
                                params: WorkerParameters)
-    : CoroutineWorker(context, params) {
+    : MatrixCoroutineWorker<SendEventWorker.Params>(context, params) {
 
     @JsonClass(generateAdapter = true)
     internal data class Params(
@@ -58,11 +59,9 @@ internal class SendEventWorker(context: Context,
     @Inject lateinit var eventBus: EventBus
     @Inject lateinit var cancelSendTracker: CancelSendTracker
 
-    override suspend fun doWork(): Result {
-        val params = WorkerParamsFactory.fromData<Params>(inputData)
-                ?: return Result.success()
-                        .also { Timber.e("## SendEvent: Unable to parse work parameters") }
-        val sessionComponent = getSessionComponent(params.sessionId) ?: return Result.success()
+    override fun parse(inputData: Data) = WorkerParamsFactory.fromData<Params>(inputData)
+
+    override suspend fun doSafeWork(sessionComponent: SessionComponent, params: Params): Result {
         sessionComponent.inject(this)
 
         val event = params.event
@@ -104,6 +103,15 @@ internal class SendEventWorker(context: Context,
                 Result.retry()
             }
         }
+    }
+
+    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+        return Result.success(
+                WorkerParamsFactory.toData(
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                )
+        )
     }
 
     private suspend fun sendEvent(eventId: String, roomId: String, type: String, content: Content?) {

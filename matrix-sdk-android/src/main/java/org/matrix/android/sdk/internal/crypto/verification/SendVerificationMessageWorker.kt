@@ -17,7 +17,6 @@
 package org.matrix.android.sdk.internal.crypto.verification
 
 import android.content.Context
-import androidx.work.CoroutineWorker
 import androidx.work.Data
 import androidx.work.WorkerParameters
 import com.squareup.moshi.JsonClass
@@ -25,10 +24,10 @@ import org.matrix.android.sdk.api.failure.shouldBeRetried
 import org.matrix.android.sdk.api.session.crypto.CryptoService
 import org.matrix.android.sdk.api.session.events.model.Event
 import org.matrix.android.sdk.internal.crypto.tasks.SendVerificationMessageTask
+import org.matrix.android.sdk.internal.session.SessionComponent
+import org.matrix.android.sdk.internal.worker.MatrixCoroutineWorker
 import org.matrix.android.sdk.internal.worker.SessionWorkerParams
 import org.matrix.android.sdk.internal.worker.WorkerParamsFactory
-import org.matrix.android.sdk.internal.worker.getSessionComponent
-import timber.log.Timber
 import javax.inject.Inject
 
 /**
@@ -37,7 +36,7 @@ import javax.inject.Inject
  */
 internal class SendVerificationMessageWorker(context: Context,
                                              params: WorkerParameters)
-    : CoroutineWorker(context, params) {
+    : MatrixCoroutineWorker<SendVerificationMessageWorker.Params>(context, params) {
 
     @JsonClass(generateAdapter = true)
     internal data class Params(
@@ -52,16 +51,9 @@ internal class SendVerificationMessageWorker(context: Context,
     @Inject
     lateinit var cryptoService: CryptoService
 
-    override suspend fun doWork(): Result {
-        val errorOutputData = Data.Builder().putBoolean(OUTPUT_KEY_FAILED, true).build()
-        val params = WorkerParamsFactory.fromData<Params>(inputData)
-                ?: return Result.success(errorOutputData)
+    override fun parse(inputData: Data) = WorkerParamsFactory.fromData<Params>(inputData)
 
-        val sessionComponent = getSessionComponent(params.sessionId)
-                ?: return Result.success(errorOutputData).also {
-                    // TODO, can this happen? should I update local echo?
-                    Timber.e("Unknown Session, cannot send message, sessionId: ${params.sessionId}")
-                }
+    override suspend fun doSafeWork(sessionComponent: SessionComponent, params: Params): Result {
         sessionComponent.inject(this)
         val localId = params.event.eventId ?: ""
         return try {
@@ -73,20 +65,21 @@ internal class SendVerificationMessageWorker(context: Context,
             )
 
             Result.success(Data.Builder().putString(localId, eventId).build())
-        } catch (exception: Throwable) {
-            if (exception.shouldBeRetried()) {
+        } catch (throwable: Throwable) {
+            if (throwable.shouldBeRetried()) {
                 Result.retry()
             } else {
-                Result.success(errorOutputData)
+                buildErrorResult(params, throwable)
             }
         }
     }
 
-    companion object {
-        private const val OUTPUT_KEY_FAILED = "failed"
-
-        fun hasFailed(outputData: Data): Boolean {
-            return outputData.getBoolean(OUTPUT_KEY_FAILED, false)
-        }
+    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+        return Result.success(
+                WorkerParamsFactory.toData(
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                )
+        )
     }
 }
