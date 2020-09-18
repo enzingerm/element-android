@@ -76,7 +76,7 @@ internal class SendGossipWorker(context: Context,
         val requestingUserId = params.request.userId ?: ""
         val requestingDeviceId = params.request.deviceId ?: ""
         val deviceInfo = cryptoStore.getUserDevice(requestingUserId, requestingDeviceId)
-                ?: return buildErrorResult(params, IllegalStateException("Unknown deviceInfo, cannot send message")).also {
+                ?: return buildErrorResult(params, "Unknown deviceInfo, cannot send message").also {
                     cryptoStore.updateGossipingRequestState(params.request, GossipingRequestState.FAILED_TO_ACCEPTED)
                     Timber.e("Unknown deviceInfo, cannot send message, sessionId: ${params.request.deviceId}")
                 }
@@ -89,7 +89,7 @@ internal class SendGossipWorker(context: Context,
         if (olmSessionResult?.sessionId == null) {
             // no session with this device, probably because there
             // were no one-time keys.
-            return buildErrorResult(params, IllegalStateException("no session with this device")).also {
+            return buildErrorResult(params, "no session with this device").also {
                 cryptoStore.updateGossipingRequestState(params.request, GossipingRequestState.FAILED_TO_ACCEPTED)
                 Timber.e("no session with this device, probably because there were no one-time keys.")
             }
@@ -130,16 +130,16 @@ internal class SendGossipWorker(context: Context,
                 Result.retry()
             } else {
                 cryptoStore.updateGossipingRequestState(params.request, GossipingRequestState.FAILED_TO_ACCEPTED)
-                buildErrorResult(params, throwable)
+                buildErrorResult(params, throwable.localizedMessage ?: "error")
             }
         }
     }
 
-    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+    override fun buildErrorResult(params: Params?, message: String): Result {
         return Result.success(
                 WorkerParamsFactory.toData(
-                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
-                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: message)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = message)
                 )
         )
     }

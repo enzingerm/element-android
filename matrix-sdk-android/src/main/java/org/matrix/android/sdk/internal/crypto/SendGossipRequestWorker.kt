@@ -116,7 +116,7 @@ internal class SendGossipRequestWorker(context: Context,
                 }
             }
             else                              -> {
-                return buildErrorResult(params, IllegalStateException("Unknown empty gossiping request")).also {
+                return buildErrorResult(params, "Unknown empty gossiping request").also {
                     Timber.e("Unknown empty gossiping request: $params")
                 }
             }
@@ -137,16 +137,16 @@ internal class SendGossipRequestWorker(context: Context,
                 Result.retry()
             } else {
                 cryptoStore.updateOutgoingGossipingRequestState(requestId, OutgoingGossipingRequestState.FAILED_TO_SEND)
-                buildErrorResult(params, throwable)
+                buildErrorResult(params, throwable.localizedMessage ?: "error")
             }
         }
     }
 
-    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+    override fun buildErrorResult(params: Params?, message: String): Result {
         return Result.success(
                 WorkerParamsFactory.toData(
-                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
-                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: message)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = message)
                 )
         )
     }

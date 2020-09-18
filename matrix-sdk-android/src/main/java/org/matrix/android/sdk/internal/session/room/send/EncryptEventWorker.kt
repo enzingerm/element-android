@@ -137,11 +137,11 @@ internal class EncryptEventWorker(context: Context, params: WorkerParameters)
         }
     }
 
-    override fun buildErrorResult(params: Params?, throwable: Throwable): Result {
+    override fun buildErrorResult(params: Params?, message: String): Result {
         return Result.success(
                 WorkerParamsFactory.toData(
-                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: throwable.localizedMessage)
-                                ?: ErrorData(sessionId = "", lastFailureMessage = throwable.localizedMessage)
+                        params?.copy(lastFailureMessage = params.lastFailureMessage ?: message)
+                                ?: ErrorData(sessionId = "", lastFailureMessage = message)
                 )
         )
     }

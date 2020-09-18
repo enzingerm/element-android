@@ -38,7 +38,7 @@ internal abstract class MatrixCoroutineWorker<PARAM : SessionWorkerParams>(
 
     final override suspend fun doWork(): Result {
         val params = parse(inputData)
-                ?: return buildErrorResult(null, IllegalStateException("Unable to parse work parameters"))
+                ?: return buildErrorResult(null, "Unable to parse work parameters")
                         .also { Timber.e("Unable to parse work parameters") }
 
         if (params.lastFailureMessage != null) {
@@ -46,12 +46,12 @@ internal abstract class MatrixCoroutineWorker<PARAM : SessionWorkerParams>(
         }
 
         val sessionComponent = getSessionComponent(params.sessionId)
-                ?: return buildErrorResult(params, IllegalStateException("No session"))
+                ?: return buildErrorResult(params, "No session")
 
         return try {
             doSafeWork(sessionComponent, params)
         } catch (throwable: Throwable) {
-            buildErrorResult(params, throwable)
+            buildErrorResult(params, throwable.localizedMessage ?: "error")
         }
     }
 
@@ -59,7 +59,7 @@ internal abstract class MatrixCoroutineWorker<PARAM : SessionWorkerParams>(
 
     abstract suspend fun doSafeWork(sessionComponent: SessionComponent, params: PARAM): Result
 
-    abstract fun buildErrorResult(params: PARAM?, throwable: Throwable): Result
+    abstract fun buildErrorResult(params: PARAM?, message: String): Result
 
     @CallSuper
     open fun doOnError(params: PARAM): Result {
